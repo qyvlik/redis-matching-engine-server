@@ -1,2 +1,3 @@
-# reids-matching-engine
-Implement matching engine by lua script, run in redis, trigger by java
+# reids-matching-engine-server
+
+Implement matching engine by lua script, run in redis
