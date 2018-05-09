@@ -286,6 +286,20 @@ local function get_match_json(match_id)
     return get_json_from_redis_hash(key, 'id', match_id);
 end
 
+local function put_last_price(symbol, currency, price)
+    local key = 'last_price:' .. currency .. ':' .. symbol;
+    redis.call('SET', key, price);
+end
+
+local function get_last_price(symbol, currency)
+    local key = 'last_price:' .. currency .. ':' .. symbol;
+    local last_price = redis.call('GET', key);
+    if not last_price then
+        return 0.0;
+    end
+    return tonumber(last_price);
+end
+
 local function delivery_order(match)
     save_match(match);
 
@@ -302,7 +316,6 @@ local function delivery_order(match)
     end
 
     local buy_order_price = get_order_field(match.buy_order_id, 'price');
-
     update_depth_item(match.symbol, match.currency, 'buy', buy_order_price, -match.amount);
 
     add_user_available(match.seller_id, match.currency, match.money);
@@ -318,8 +331,9 @@ local function delivery_order(match)
     end
 
     local sell_order_price = get_order_field(match.sell_order_id, 'price');
-
     update_depth_item(match.symbol, match.currency, 'sell', sell_order_price, -match.amount);
+
+    put_last_price(match.price);
 end
 
 -- api
@@ -482,8 +496,8 @@ local function match_order(symbol, currency, limit, timestamp)
             break ;
         end
 
-        local ask1_id = table.remove(askList, 1);           -- {order_id, price}
-        local bid1_id = table.remove(bidList, 1);           -- {order_id, price}
+        local ask1_id = table.remove(askList, 1);
+        local bid1_id = table.remove(bidList, 1);
         running = match_order_once(symbol, currency, ask1_id, bid1_id, timestamp);
         if running then
             match_count = match_count + 1;
@@ -504,7 +518,8 @@ local exchange = {
     match_order = match_order,
     get_match_json = get_match_json,
     get_order_json = get_order_json,
-    get_depth_json = get_depth_json
+    get_depth_json = get_depth_json,
+    get_last_price = get_last_price
 }
 
 return exchange;
