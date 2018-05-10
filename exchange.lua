@@ -333,7 +333,7 @@ local function delivery_order(match)
     local sell_order_price = get_order_field(match.sell_order_id, 'price');
     update_depth_item(match.symbol, match.currency, 'sell', sell_order_price, -match.amount);
 
-    put_last_price(match.price);
+    put_last_price(match.symbol, match.currency, match.price);
 end
 
 -- api
