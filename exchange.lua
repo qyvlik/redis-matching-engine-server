@@ -30,18 +30,22 @@ end
 -- user_asset:available:1:btc
 -- user_asset:frozen:1:usdt
 local function add_user_available(user_id, coin, amount)
+    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:available:' .. user_id .. ':' .. coin, amount);
 end
 
 local function sub_user_available(user_id, coin, amount)
+    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:available:' .. user_id .. ':' .. coin, -amount);
 end
 
 local function add_user_frozen(user_id, coin, amount)
+    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:frozen:' .. user_id .. ':' .. coin, amount);
 end
 
 local function sub_user_frozen(user_id, coin, amount)
+    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:frozen:' .. user_id .. ':' .. coin, -amount);
 end
 
@@ -64,16 +68,19 @@ local function get_user_frozen_asset(user_id, coin)
 end
 
 local function deposit_for_user(user_id, coin, amount)
+    -- atomic
     add_user_available(user_id, coin, amount);
     return true;
 end
 
 local function withdraw_apply_user(user_id, coin, amount)
+    -- atomic
     sub_user_available(user_id, coin, amount);
     add_user_frozen(user_id, coin, amount);
 end
 
 local function withdraw_success_user(user_id, coin, amount)
+    -- atomic
     sub_user_frozen(user_id, coin, amount);
 end
 
@@ -82,8 +89,8 @@ end
 -- order:1
 --  user_id
 --  side
---  symbol
---  currency
+--  stock_id
+--  money_id
 --  price
 --  amount
 --  money
@@ -94,24 +101,25 @@ end
 --  status: create, part, cancel, finish
 
 local function get_order_last_id()
+    -- atomic
     return redis.call('INCRBY', 'order:last', 1);
 end
 
-local function save_order(user_id, symbol, currency, side, price, amount, money, timestamp)
+local function save_order(user_id, stock_id, money_id, side, price, amount, money, timestamp)
     local order_id = get_order_last_id();
-    local pre_key = 'order:' .. order_id;
+    local key = 'order:' .. order_id;
 
-    redis.call('HSET', pre_key, 'user_id', user_id);
-    redis.call('HSET', pre_key, 'side', side);
-    redis.call('HSET', pre_key, 'symbol', symbol);
-    redis.call('HSET', pre_key, 'currency', currency);
-    redis.call('HSET', pre_key, 'price', price);
-    redis.call('HSET', pre_key, 'amount', amount);
-    redis.call('HSET', pre_key, 'money', money);
-    redis.call('HSET', pre_key, 'create_time', timestamp);
-    redis.call('HSET', pre_key, 'process_amount', 0.0);
-    redis.call('HSET', pre_key, 'process_money', 0.0);
-    redis.call('HSET', pre_key, 'status', 'create');
+    redis.call('HSET', key, 'user_id', user_id);
+    redis.call('HSET', key, 'side', side);
+    redis.call('HSET', key, 'stock_id', stock_id);
+    redis.call('HSET', key, 'money_id', money_id);
+    redis.call('HSET', key, 'price', price);
+    redis.call('HSET', key, 'amount', amount);
+    redis.call('HSET', key, 'money', money);
+    redis.call('HSET', key, 'create_time', timestamp);
+    redis.call('HSET', key, 'process_amount', 0.0);
+    redis.call('HSET', key, 'process_money', 0.0);
+    redis.call('HSET', key, 'status', 'create');
     return order_id;
 end
 
@@ -133,18 +141,14 @@ local function get_order_remain_money(order_id)
 end
 
 local function add_order_process(order_id, amount, money)
-    local pre_key = 'order:' .. order_id;
-    local process_amount = get_order_field(order_id, 'process_amount');
-    local process_money = get_order_field(order_id, 'process_money');
-    process_amount = process_amount + amount;
-    process_money = process_money + money;
-    redis.call('HSET', pre_key, 'process_amount', process_amount);
-    redis.call('HSET', pre_key, 'process_money', process_money);
+    local key = 'order:' .. order_id;
+    redis.call('HINCRBYFLOAT', key, 'process_amount', amount);
+    redis.call('HINCRBYFLOAT', key, 'process_money', money);
 end
 
 local function modify_order_status(order_id, status)
-    local pre_key = 'order:' .. order_id;
-    redis.call('HSET', pre_key, 'status', status);
+    local key = 'order:' .. order_id;
+    redis.call('HSET', key, 'status', status);
 end
 
 local function get_order_json(order_id)
@@ -153,9 +157,9 @@ local function get_order_json(order_id)
 end
 
 -- order_book:usdt:btc
-local function update_depth_item(symbol, currency, side, price, amount)
-    local order_book = 'order_book:' .. currency .. ':' .. symbol .. ':' .. side;
-    local order_book_price = 'order_book_price:' .. currency .. ':' .. symbol .. ':' .. side;
+local function update_depth_item(stock_id, money_id, side, price, amount)
+    local order_book = 'order_book:' .. money_id .. ':' .. stock_id .. ':' .. side;
+    local order_book_price = 'order_book_price:' .. money_id .. ':' .. stock_id .. ':' .. side;
     local amount_value = redis.call('HINCRBYFLOAT', order_book, price, amount);
     amount_value = tonumber(amount_value);
 
@@ -167,9 +171,9 @@ local function update_depth_item(symbol, currency, side, price, amount)
     end
 end
 
-local function get_single_depth(symbol, currency, side, limit)
-    local order_book = 'order_book:' .. currency .. ':' .. symbol .. ':' .. side;
-    local order_book_price = 'order_book_price:' .. currency .. ':' .. symbol .. ':' .. side;
+local function get_single_depth(stock_id, money_id, side, limit)
+    local order_book = 'order_book:' .. money_id .. ':' .. stock_id .. ':' .. side;
+    local order_book_price = 'order_book_price:' .. money_id .. ':' .. stock_id .. ':' .. side;
     local sort = '';
 
     if side == 'buy' then
@@ -195,12 +199,12 @@ local function get_single_depth(symbol, currency, side, limit)
     return single_depth;
 end
 
-local function get_depth_json(symbol, currency, limit)
-    local ask_depth = get_single_depth(symbol, currency, 'sell', limit);
-    local bid_depth = get_single_depth(symbol, currency, 'buy', limit);
+local function get_depth_json(stock_id, money_id, limit)
+    local ask_depth = get_single_depth(stock_id, money_id, 'sell', limit);
+    local bid_depth = get_single_depth(stock_id, money_id, 'buy', limit);
     local depth = {
-        symbol = symbol,
-        currency = currency
+        stock_id = stock_id,
+        money_id = money_id
     };
 
     if not table_is_empty(ask_depth) then
@@ -214,17 +218,17 @@ local function get_depth_json(symbol, currency, limit)
     return cjson.encode(depth);
 end
 
--- order_book_list:usdt:btc:buy
+-- order_book_central:usdt:btc:buy
 -- score: price
 -- member: order_id
-local function put_into_order_book_list(symbol, currency, side, order_id, price)
-    local key = 'order_book_list:' .. currency .. ':' .. symbol .. ':' .. side;
+local function put_into_order_book_central(stock_id, money_id, side, order_id, price)
+    local key = 'order_book_central:' .. money_id .. ':' .. stock_id .. ':' .. side;
     redis.call('ZADD', key, price, order_id);           -- 升序排序
 end
 
-local function get_top_from_order_book_list(symbol, currency, side, limit)
+local function get_top_from_order_book_central(stock_id, money_id, side, limit)
     -- limit > 0
-    local key = 'order_book_list:' .. currency .. ':' .. symbol .. ':' .. side;
+    local key = 'order_book_central:' .. money_id .. ':' .. stock_id .. ':' .. side;
     local from = 0;
     local to = 0;
 
@@ -239,8 +243,8 @@ local function get_top_from_order_book_list(symbol, currency, side, limit)
     return order_book_range;
 end
 
-local function remove_order_book(symbol, currency, side, order_id)
-    local key = 'order_book_list:' .. currency .. ':' .. symbol .. ':' .. side;
+local function remove_order_from_order_book_central(stock_id, money_id, side, order_id)
+    local key = 'order_book_central:' .. money_id .. ':' .. stock_id .. ':' .. side;
     redis.call('ZREM', key, order_id);
 end
 
@@ -249,8 +253,8 @@ end
 --  id
 --  price
 --  side
---  symbol
---  currency
+--  stock_id
+--  money_id
 --  price
 --  amount
 --  money
@@ -269,8 +273,8 @@ local function save_match(match)
     redis.call('HSET', pre_key, 'buy_order_id', match.buy_order_id);
     redis.call('HSET', pre_key, 'seller_id', match.seller_id);
     redis.call('HSET', pre_key, 'buyer_id', match.buyer_id);
-    redis.call('HSET', pre_key, 'symbol', match.symbol);
-    redis.call('HSET', pre_key, 'currency', match.currency);
+    redis.call('HSET', pre_key, 'stock_id', match.stock_id);
+    redis.call('HSET', pre_key, 'money_id', match.money_id);
     redis.call('HSET', pre_key, 'side', match.side);
     redis.call('HSET', pre_key, 'price', match.price);
     redis.call('HSET', pre_key, 'amount', match.amount);
@@ -286,13 +290,13 @@ local function get_match_json(match_id)
     return get_json_from_redis_hash(key, 'id', match_id);
 end
 
-local function put_last_price(symbol, currency, price)
-    local key = 'last_price:' .. currency .. ':' .. symbol;
+local function put_last_price(stock_id, money_id, price)
+    local key = 'last_price:' .. money_id .. ':' .. stock_id;
     redis.call('SET', key, price);
 end
 
-local function get_last_price(symbol, currency)
-    local key = 'last_price:' .. currency .. ':' .. symbol;
+local function get_last_price(stock_id, money_id)
+    local key = 'last_price:' .. money_id .. ':' .. stock_id;
     local last_price = redis.call('GET', key);
     if not last_price then
         return 0.0;
@@ -300,45 +304,43 @@ local function get_last_price(symbol, currency)
     return tonumber(last_price);
 end
 
-local function delivery_order(match)
+local function execute_order(match)
     save_match(match);
 
-    add_user_available(match.buyer_id, match.symbol, match.amount);
-    sub_user_frozen(match.buyer_id, match.currency, match.money);
+    add_user_available(match.buyer_id, match.stock_id, match.amount);
+    sub_user_frozen(match.buyer_id, match.money_id, match.money);
     add_order_process(match.buy_order_id, match.amount, match.money);
 
     local remain_money = get_order_remain_money(match.buy_order_id);
     if remain_money <= 0 then
         modify_order_status(match.buy_order_id, 'finish');
-        remove_order_book(match.symbol, match.currency, 'buy', match.buy_order_id);
+        remove_order_from_order_book_central(match.stock_id, match.money_id, 'buy', match.buy_order_id);
     else
         modify_order_status(match.buy_order_id, 'part');
     end
 
     local buy_order_price = get_order_field(match.buy_order_id, 'price');
-    update_depth_item(match.symbol, match.currency, 'buy', buy_order_price, -match.amount);
+    update_depth_item(match.stock_id, match.money_id, 'buy', buy_order_price, -match.amount);
 
-    add_user_available(match.seller_id, match.currency, match.money);
-    sub_user_frozen(match.seller_id, match.symbol, match.amount);
+    add_user_available(match.seller_id, match.money_id, match.money);
+    sub_user_frozen(match.seller_id, match.stock_id, match.amount);
     add_order_process(match.sell_order_id, match.amount, match.money);
 
     local remain_amount = get_order_remain_amount(match.sell_order_id);
     if remain_amount <= 0 then
         modify_order_status(match.sell_order_id, 'finish');
-        remove_order_book(match.symbol, match.currency, 'sell', match.sell_order_id);
+        remove_order_from_order_book_central(match.stock_id, match.money_id, 'sell', match.sell_order_id);
     else
         modify_order_status(match.sell_order_id, 'part');
     end
 
     local sell_order_price = get_order_field(match.sell_order_id, 'price');
-    update_depth_item(match.symbol, match.currency, 'sell', sell_order_price, -match.amount);
+    update_depth_item(match.stock_id, match.money_id, 'sell', sell_order_price, -match.amount);
 
-    put_last_price(match.symbol, match.currency, match.price);
+    put_last_price(match.stock_id, match.money_id, match.price);
 end
 
--- api
-
-local function submit_order(user_id, symbol, currency, side, price, amount, timestamp)
+local function submit_order(user_id, stock_id, money_id, side, price, amount, timestamp)
     price = tonumber(price);
     amount = tonumber(amount);
 
@@ -353,20 +355,18 @@ local function submit_order(user_id, symbol, currency, side, price, amount, time
     end
 
     local user_available = 0.0;
-    local user_frozen = 0.0;
     local lock_asset_coin = '';
     local lock_asset_coin_amount = 0.0;
 
     if side == 'buy' then
-        lock_asset_coin = currency;
+        lock_asset_coin = money_id;
         lock_asset_coin_amount = money;
     else
-        lock_asset_coin = symbol;
+        lock_asset_coin = stock_id;
         lock_asset_coin_amount = amount;
     end
 
     user_available = get_user_available_asset(user_id, lock_asset_coin);
-    user_frozen = get_user_frozen_asset(user_id, lock_asset_coin);
 
     if lock_asset_coin_amount > user_available then
         return -1;
@@ -376,11 +376,11 @@ local function submit_order(user_id, symbol, currency, side, price, amount, time
 
     add_user_frozen(user_id, lock_asset_coin, lock_asset_coin_amount);
 
-    local order_id = save_order(user_id, symbol, currency, side, price, amount, money, timestamp);
+    local order_id = save_order(user_id, stock_id, money_id, side, price, amount, money, timestamp);
 
-    put_into_order_book_list(symbol, currency, side, order_id, price);
+    put_into_order_book_central(stock_id, money_id, side, order_id, price);
 
-    update_depth_item(symbol, currency, side, price, amount);
+    update_depth_item(stock_id, money_id, side, price, amount);
 
     return order_id;
 end
@@ -396,29 +396,28 @@ local function cancel_order(order_id)
     local unlock_asset_coin_amount = 0.0;
     local user_id = get_order_field(order_id, 'user_id');
     local price = get_order_field(order_id, 'price');
-    local symbol = get_order_field(order_id, 'symbol');
-    local currency = get_order_field(order_id, 'currency');
+    local stock_id = get_order_field(order_id, 'stock_id');
+    local money_id = get_order_field(order_id, 'money_id');
     local money = get_order_field(order_id, 'money');
     local process_money = get_order_field(order_id, 'process_money');
     local amount = get_order_field(order_id, 'amount');
     local process_amount = get_order_field(order_id, 'process_amount');
 
     if side == 'buy' then
-        unlock_asset_coin = currency;
+        unlock_asset_coin = money_id;
         unlock_asset_coin_amount = tonumber(money) - tonumber(process_money);
     else
-        unlock_asset_coin = symbol;
+        unlock_asset_coin = stock_id;
         unlock_asset_coin_amount = tonumber(amount) - tonumber(process_amount);
     end
 
     modify_order_status(order_id, 'cancel');
-    remove_order_book(symbol, currency, side, order_id);
-
+    remove_order_from_order_book_central(stock_id, money_id, side, order_id);
+    update_depth_item(stock_id, money_id, side, price, -unlock_asset_coin_amount);
+    
     add_user_available(user_id, unlock_asset_coin, unlock_asset_coin_amount);
     sub_user_frozen(user_id, unlock_asset_coin, unlock_asset_coin_amount);
-
-    update_depth_item(symbol, currency, side, price, -unlock_asset_coin_amount);
-
+    
     return 1;
 end
 
@@ -426,7 +425,7 @@ local SELL_ORDER_FILL = 0;
 local BUY_ORDER_FILL = 1;
 local BUY_ORDER_AND_ORDER_SELL_FILL = 2;
 
-local function match_order_once(symbol, currency, ask1_id, bid1_id, timestamp)
+local function match_order_once(stock_id, money_id, ask1_id, bid1_id, timestamp)
 
     if not ask1_id or not bid1_id then
         return false;
@@ -448,8 +447,8 @@ local function match_order_once(symbol, currency, ask1_id, bid1_id, timestamp)
     match.buy_order_id = bid1_id;
     match.seller_id = seller_id;
     match.buyer_id = buyer_id;
-    match.symbol = symbol;
-    match.currency = currency;
+    match.stock_id = stock_id;
+    match.money_id = money_id;
     match.timestamp = timestamp;
 
     if ask1_id < bid1_id then
@@ -480,14 +479,14 @@ local function match_order_once(symbol, currency, ask1_id, bid1_id, timestamp)
         end
     end
 
-    delivery_order(match);
+    execute_order(match);
 
     return true;
 end
 
-local function match_order(symbol, currency, limit, timestamp)
-    local askList = get_top_from_order_book_list(symbol, currency, 'sell', limit);
-    local bidList = get_top_from_order_book_list(symbol, currency, 'buy', limit);
+local function match_order(stock_id, money_id, limit, timestamp)
+    local askList = get_top_from_order_book_central(stock_id, money_id, 'sell', limit);
+    local bidList = get_top_from_order_book_central(stock_id, money_id, 'buy', limit);
 
     local match_count = 0;
     local running = true;
@@ -498,7 +497,7 @@ local function match_order(symbol, currency, limit, timestamp)
 
         local ask1_id = table.remove(askList, 1);
         local bid1_id = table.remove(bidList, 1);
-        running = match_order_once(symbol, currency, ask1_id, bid1_id, timestamp);
+        running = match_order_once(stock_id, money_id, ask1_id, bid1_id, timestamp);
         if running then
             match_count = match_count + 1;
         end
