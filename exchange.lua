@@ -134,18 +134,6 @@ local function get_order_remain_amount(order_id)
     return tonumber(amount) - tonumber(process_amount);
 end
 
-local function get_order_remain_money(order_id)
-    local money = get_order_field(order_id, 'money');
-    local process_money = get_order_field(order_id, 'process_money');
-    return tonumber(money) - tonumber(process_money);
-end
-
-local function add_order_process(order_id, amount, money)
-    local key = 'order:' .. order_id;
-    redis.call('HINCRBYFLOAT', key, 'process_amount', amount);
-    redis.call('HINCRBYFLOAT', key, 'process_money', money);
-end
-
 local function modify_order_status(order_id, status)
     local key = 'order:' .. order_id;
     redis.call('HSET', key, 'status', status);
@@ -259,7 +247,6 @@ end
 --  amount
 --  money
 --  create_time
-
 local function get_match_last_id()
     return redis.call('INCRBY', 'match:last', 1);
 end
@@ -268,19 +255,19 @@ local function save_match(match)
     local match_id = get_match_last_id();
     match.id = match_id;
 
-    local pre_key = 'match:' .. match_id;
-    redis.call('HSET', pre_key, 'sell_order_id', match.sell_order_id);
-    redis.call('HSET', pre_key, 'buy_order_id', match.buy_order_id);
-    redis.call('HSET', pre_key, 'seller_id', match.seller_id);
-    redis.call('HSET', pre_key, 'buyer_id', match.buyer_id);
-    redis.call('HSET', pre_key, 'stock_id', match.stock_id);
-    redis.call('HSET', pre_key, 'money_id', match.money_id);
-    redis.call('HSET', pre_key, 'side', match.side);
-    redis.call('HSET', pre_key, 'price', match.price);
-    redis.call('HSET', pre_key, 'amount', match.amount);
-    redis.call('HSET', pre_key, 'money', match.money);
-    redis.call('HSET', pre_key, 'flag', match.flag);
-    redis.call('HSET', pre_key, 'timestamp', match.timestamp);
+    local key = 'match:' .. match_id;
+    redis.call('HSET', key, 'sell_order_id', match.sell_order_id);
+    redis.call('HSET', key, 'buy_order_id', match.buy_order_id);
+    redis.call('HSET', key, 'seller_id', match.seller_id);
+    redis.call('HSET', key, 'buyer_id', match.buyer_id);
+    redis.call('HSET', key, 'stock_id', match.stock_id);
+    redis.call('HSET', key, 'money_id', match.money_id);
+    redis.call('HSET', key, 'side', match.side);
+    redis.call('HSET', key, 'price', match.price);
+    redis.call('HSET', key, 'amount', match.amount);
+    redis.call('HSET', key, 'money', match.money);
+    redis.call('HSET', key, 'flag', match.flag);
+    redis.call('HSET', key, 'timestamp', match.timestamp);
 
     return match_id;
 end
@@ -304,38 +291,41 @@ local function get_last_price(stock_id, money_id)
     return tonumber(last_price);
 end
 
+local function add_order_process(order_id, side, match)
+    local key = 'order:' .. order_id;
+    local process_amount = redis.call('HINCRBYFLOAT', key, 'process_amount', match.amount);
+    local process_money = redis.call('HINCRBYFLOAT', key, 'process_money', match.money);
+    local order_amount = get_order_field(order_id, 'amount');
+    local order_money = get_order_field(order_id, 'money');
+
+    local remain_amount = order_amount - process_amount;
+    local remain_money = 0.0;
+
+    if remain_amount <= 0.0 then
+        remove_order_from_order_book_central(match.stock_id, match.money_id, side, order_id);
+        modify_order_status(order_id, 'finish');
+        remain_money = order_money - process_money;
+    else
+        modify_order_status(order_id, 'part');
+    end
+
+    if side == 'buy' then
+        add_user_available(match.buyer_id, match.stock_id, match.amount);
+        sub_user_frozen(match.buyer_id, match.money_id, match.money + remain_money);
+    else
+        add_user_available(match.seller_id, match.money_id, match.money);
+        sub_user_frozen(match.seller_id, match.stock_id, match.amount);
+    end
+end
+
 local function execute_order(match)
     save_match(match);
 
-    add_user_available(match.buyer_id, match.stock_id, match.amount);
-    sub_user_frozen(match.buyer_id, match.money_id, match.money);
-    add_order_process(match.buy_order_id, match.amount, match.money);
+    add_order_process(match.buy_order_id, 'buy', match);
+    update_depth_item(match.stock_id, match.money_id, 'buy', match.bid1_price, -match.amount);
 
-    local remain_money = get_order_remain_money(match.buy_order_id);
-    if remain_money <= 0 then
-        modify_order_status(match.buy_order_id, 'finish');
-        remove_order_from_order_book_central(match.stock_id, match.money_id, 'buy', match.buy_order_id);
-    else
-        modify_order_status(match.buy_order_id, 'part');
-    end
-
-    local buy_order_price = get_order_field(match.buy_order_id, 'price');
-    update_depth_item(match.stock_id, match.money_id, 'buy', buy_order_price, -match.amount);
-
-    add_user_available(match.seller_id, match.money_id, match.money);
-    sub_user_frozen(match.seller_id, match.stock_id, match.amount);
-    add_order_process(match.sell_order_id, match.amount, match.money);
-
-    local remain_amount = get_order_remain_amount(match.sell_order_id);
-    if remain_amount <= 0 then
-        modify_order_status(match.sell_order_id, 'finish');
-        remove_order_from_order_book_central(match.stock_id, match.money_id, 'sell', match.sell_order_id);
-    else
-        modify_order_status(match.sell_order_id, 'part');
-    end
-
-    local sell_order_price = get_order_field(match.sell_order_id, 'price');
-    update_depth_item(match.stock_id, match.money_id, 'sell', sell_order_price, -match.amount);
+    add_order_process(match.sell_order_id, 'sell', match);
+    update_depth_item(match.stock_id, match.money_id, 'sell', match.ask1_price, -match.amount);
 
     put_last_price(match.stock_id, match.money_id, match.price);
 end
@@ -414,10 +404,10 @@ local function cancel_order(order_id)
     modify_order_status(order_id, 'cancel');
     remove_order_from_order_book_central(stock_id, money_id, side, order_id);
     update_depth_item(stock_id, money_id, side, price, -unlock_asset_coin_amount);
-    
+
     add_user_available(user_id, unlock_asset_coin, unlock_asset_coin_amount);
     sub_user_frozen(user_id, unlock_asset_coin, unlock_asset_coin_amount);
-    
+
     return 1;
 end
 
@@ -454,23 +444,24 @@ local function match_order_once(stock_id, money_id, ask1_id, bid1_id, timestamp)
     if ask1_id < bid1_id then
         match.side = 'buy';
         match.price = ask1_price;
+        match.ask1_price = ask1_price;
     else
         match.side = 'sell';
         match.price = bid1_price;
+        match.bid1_price = bid1_price;
     end
 
     local ask_amount = get_order_remain_amount(ask1_id);
-    local bid_money = get_order_remain_money(bid1_id);
-    local bid_get_amount = bid_money / match.price;
+    local bid_amount = get_order_remain_amount(bid1_id);
 
-    if ask_amount == bid_get_amount then
-        match.amount = ask_amount * 1;
+    if ask_amount == bid_amount then
+        match.amount = ask_amount;
         match.money = ask_amount * match.price;
         match.flag = BUY_ORDER_AND_ORDER_SELL_FILL;
     else
-        if ask_amount > bid_get_amount then
-            match.amount = bid_get_amount * 1;
-            match.money = bid_get_amount * match.price;
+        if ask_amount > bid_amount then
+            match.amount = bid_amount;
+            match.money = bid_amount * match.price;
             match.flag = BUY_ORDER_FILL;
         else
             match.amount = ask_amount * 1;
