@@ -148,14 +148,16 @@ end
 local function update_depth_item(stock_id, money_id, side, price, amount)
     local order_book = 'order_book:' .. money_id .. ':' .. stock_id .. ':' .. side;
     local order_book_price = 'order_book_price:' .. money_id .. ':' .. stock_id .. ':' .. side;
-    local amount_value = redis.call('HINCRBYFLOAT', order_book, price, amount);
+
+    local price_key = tostring(price);
+    local amount_value = redis.call('HINCRBYFLOAT', order_book, price_key, amount);
     amount_value = tonumber(amount_value);
 
     if amount_value <= 0.0 then
-        redis.call('HDEL', order_book, price);
-        redis.call('SREM', order_book_price, price);
+        redis.call('HDEL', order_book, price_key);
+        redis.call('SREM', order_book_price, price_key);
     else
-        redis.call('SADD', order_book_price, price);
+        redis.call('SADD', order_book_price, price_key);
     end
 end
 
@@ -296,7 +298,6 @@ local function add_order_process(order_id, side, match)
     local process_amount = redis.call('HINCRBYFLOAT', key, 'process_amount', match.amount);
     local process_money = redis.call('HINCRBYFLOAT', key, 'process_money', match.money);
     local order_amount = get_order_field(order_id, 'amount');
-    local order_money = get_order_field(order_id, 'money');
 
     local remain_amount = order_amount - process_amount;
     local remain_money = 0.0;
@@ -304,6 +305,7 @@ local function add_order_process(order_id, side, match)
     if remain_amount <= 0.0 then
         remove_order_from_order_book_central(match.stock_id, match.money_id, side, order_id);
         modify_order_status(order_id, 'finish');
+        local order_money = get_order_field(order_id, 'money');
         remain_money = order_money - process_money;
     else
         modify_order_status(order_id, 'part');
@@ -440,15 +442,15 @@ local function match_order_once(stock_id, money_id, ask1_id, bid1_id, timestamp)
     match.stock_id = stock_id;
     match.money_id = money_id;
     match.timestamp = timestamp;
+    match.ask1_price = ask1_price;
+    match.bid1_price = bid1_price;
 
     if ask1_id < bid1_id then
         match.side = 'buy';
         match.price = ask1_price;
-        match.ask1_price = ask1_price;
     else
         match.side = 'sell';
         match.price = bid1_price;
-        match.bid1_price = bid1_price;
     end
 
     local ask_amount = get_order_remain_amount(ask1_id);
