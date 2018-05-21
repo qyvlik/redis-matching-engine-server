@@ -124,8 +124,8 @@ local function save_order(user_id, stock_id, money_id, side, price, amount, mone
 end
 
 local function get_order_field(order_id, field)
-    local pre_key = 'order:' .. order_id;
-    return redis.call('HGET', pre_key, field);
+    local key = 'order:' .. order_id;
+    return redis.call('HGET', key, field);
 end
 
 local function get_order_remain_amount(order_id)
@@ -215,6 +215,7 @@ local function put_into_order_book_central(stock_id, money_id, side, order_id, p
     local key = 'order_book_central:' .. money_id .. ':' .. stock_id .. ':' .. side;
     redis.call('ZADD', key, price, order_id);           -- 升序排序
 end
+
 
 local function get_top_from_order_book_central(stock_id, money_id, side, limit)
     -- limit > 0
@@ -336,8 +337,6 @@ local function submit_order(user_id, stock_id, money_id, side, price, amount, ti
     price = tonumber(price);
     amount = tonumber(amount);
 
-    local money = price * amount;
-
     if price <= 0 then
         return -2;
     end
@@ -345,6 +344,8 @@ local function submit_order(user_id, stock_id, money_id, side, price, amount, ti
     if amount <= 0 then
         return -3;
     end
+
+    local money = price * amount;
 
     local user_available = 0.0;
     local lock_asset_coin = '';
