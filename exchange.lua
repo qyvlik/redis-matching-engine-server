@@ -30,22 +30,18 @@ end
 -- user_asset:available:1:btc
 -- user_asset:frozen:1:usdt
 local function add_user_available(user_id, coin, amount)
-    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:available:' .. user_id .. ':' .. coin, amount);
 end
 
 local function sub_user_available(user_id, coin, amount)
-    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:available:' .. user_id .. ':' .. coin, -amount);
 end
 
 local function add_user_frozen(user_id, coin, amount)
-    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:frozen:' .. user_id .. ':' .. coin, amount);
 end
 
 local function sub_user_frozen(user_id, coin, amount)
-    -- atomic
     redis.call('INCRBYFLOAT', 'user_asset:frozen:' .. user_id .. ':' .. coin, -amount);
 end
 
@@ -68,13 +64,11 @@ local function get_user_frozen_asset(user_id, coin)
 end
 
 local function deposit_for_user(user_id, coin, amount)
-    -- atomic
     add_user_available(user_id, coin, amount);
     return true;
 end
 
 local function withdraw_apply_user(user_id, coin, amount)
-    -- atomic
     sub_user_available(user_id, coin, amount);
     add_user_frozen(user_id, coin, amount);
 end
@@ -213,7 +207,7 @@ end
 -- member: order_id
 local function put_into_order_book_central(stock_id, money_id, side, order_id, price)
     local key = 'order_book_central:' .. money_id .. ':' .. stock_id .. ':' .. side;
-    redis.call('ZADD', key, price, order_id);           -- 升序排序
+    redis.call('ZADD', key, price, order_id);           -- DESC sort
 end
 
 
